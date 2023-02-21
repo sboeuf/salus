@@ -58,6 +58,10 @@ pub enum Error {
     RefCountOverflow,
     /// The ref count was already 0.
     RefCountUnderflow,
+    /// This page is not in a state it can be blocked.
+    PageNotBlockable,
+    /// Attempt to unblock, promote, demote or remove a page that is not blocked.
+    PageNotBlocked,
 }
 
 /// Holds the result of page tracking operations.
