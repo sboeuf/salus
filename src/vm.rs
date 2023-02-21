@@ -1073,6 +1073,35 @@ impl<'a, T: GuestStagePagingMode> FinalizedVm<'a, T> {
                 .guest_add_shared_pages(guest_id, page_addr, page_type, num_pages, guest_addr)
                 .into(),
             TvmInitiateFence { guest_id } => self.guest_initiate_fence(guest_id).into(),
+            TvmBlockPages {
+                guest_id,
+                guest_addr,
+                len,
+            } => self.guest_block_pages(guest_id, guest_addr, len).into(),
+            TvmUnblockPages {
+                guest_id,
+                guest_addr,
+                len,
+            } => self.guest_unblock_pages(guest_id, guest_addr, len).into(),
+            TvmPromotePage {
+                guest_id,
+                guest_addr,
+                page_type,
+            } => self
+                .guest_promote_page(guest_id, guest_addr, page_type)
+                .into(),
+            TvmDemotePage {
+                guest_id,
+                guest_addr,
+                page_type,
+            } => self
+                .guest_demote_page(guest_id, guest_addr, page_type)
+                .into(),
+            TvmRemovePages {
+                guest_id,
+                guest_addr,
+                len,
+            } => self.guest_remove_pages(guest_id, guest_addr, len).into(),
         }
     }
 
@@ -1541,6 +1570,36 @@ impl<'a, T: GuestStagePagingMode> FinalizedVm<'a, T> {
             .vm_pages()
             .initiate_fence()
             .map_err(EcallError::from)?;
+        Ok(0)
+    }
+
+    fn guest_block_pages(&self, _guest_id: u64, _guest_addr: u64, _len: u64) -> EcallResult<u64> {
+        Ok(0)
+    }
+
+    fn guest_unblock_pages(&self, _guest_id: u64, _guest_addr: u64, _len: u64) -> EcallResult<u64> {
+        Ok(0)
+    }
+
+    fn guest_promote_page(
+        &self,
+        _guest_id: u64,
+        _guest_addr: u64,
+        _page_type: TsmPageType,
+    ) -> EcallResult<u64> {
+        Ok(0)
+    }
+
+    fn guest_demote_page(
+        &self,
+        _guest_id: u64,
+        _guest_addr: u64,
+        _page_type: TsmPageType,
+    ) -> EcallResult<u64> {
+        Ok(0)
+    }
+
+    fn guest_remove_pages(&self, _guest_id: u64, _guest_addr: u64, _len: u64) -> EcallResult<u64> {
         Ok(0)
     }
 
