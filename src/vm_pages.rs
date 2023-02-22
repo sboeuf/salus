@@ -39,6 +39,7 @@ pub enum Error {
     OverlappingVmRegion,
     InsufficientVmRegionSpace,
     VmRegionNotFound,
+    VmRegionNotRemovable,
     InvalidMapRegion,
     EmptyPageRange,
     Measurement(attestation::Error),
@@ -1747,6 +1748,100 @@ impl<'a, T: GuestStagePagingMode> FinalizedVmPages<'a, T> {
         // with any pending unassignment operations.
         if flush_completed {
             self.complete_pending_unassignment();
+        }
+        Ok(())
+    }
+
+    /// Invalidates a page range.
+    pub fn block_pages(&self, page_addr: GuestPageAddr, len: u64) -> Result<()> {
+        let invalidated = self
+            .inner
+            .root
+            .invalidate_range_sparse(page_addr, len, |addr| {
+                self.inner
+                    .page_tracker
+                    .is_mapped_page(addr, self.inner.page_owner_id, MemType::Ram)
+                    || (self.inner.page_tracker.is_shared_page(addr, MemType::Ram)
+                        && self.inner.page_tracker.is_owned(addr, PageOwnerId::host()))
+            })
+            .map_err(Error::Paging)?;
+        let version = self.inner.tlb_tracker.current_version();
+        for paddr in invalidated {
+            // Safety: We've verified the typing of the page and its ownership
+            // before it was invalidated.
+            let page: Page<Invalidated> = unsafe { Page::new(paddr) };
+            // Unwrap ok: Page was mapped or shared and has just been invalidated.
+            self.inner.page_tracker.block_page(page, version).unwrap();
+        }
+
+        Ok(())
+    }
+
+    /// Unblocks previously invalidated page range.
+    pub fn unblock_pages(&self, page_addr: GuestPageAddr, len: u64) -> Result<()> {
+        let valid_pages = self
+            .inner
+            .root
+            .validate_range(page_addr, len, |addr| {
+                self.inner.page_tracker.is_blocked_page(
+                    addr,
+                    self.inner.page_owner_id,
+                    MemType::Ram,
+                ) || self
+                    .inner
+                    .page_tracker
+                    .is_blocked_shared_page(addr, MemType::Ram)
+            })
+            .map_err(Error::Paging)?;
+        for paddr in valid_pages {
+            // Unwrap ok: Page was blocked and has just been marked valid.
+            self.inner.page_tracker.unblock_page(paddr).unwrap();
+        }
+
+        Ok(())
+    }
+
+    /// Removes previously invalidated page range.
+    pub fn remove_pages(&self, page_addr: GuestPageAddr, len: u64) -> Result<()> {
+        // Check the address range lies within a removable region of guest physical address space.
+        let end = PageAddr::new(
+            RawAddr::from(page_addr)
+                .checked_increment(len)
+                .ok_or(Error::AddressOverflow)?,
+        )
+        .ok_or(Error::UnalignedAddress)?;
+        if !self
+            .inner
+            .regions
+            .read()
+            .contains(page_addr, end, VmRegionType::ConfidentialRemovable)
+            && !self
+                .inner
+                .regions
+                .read()
+                .contains(page_addr, end, VmRegionType::SharedRemovable)
+        {
+            return Err(Error::VmRegionNotRemovable);
+        }
+
+        // Does this need to be TLB current_version instead of TLB min_version?
+        let tlb_version = self.inner.tlb_tracker.min_version();
+        // Now check each page is removable before it is unmapped.
+        let unmapped = self
+            .inner
+            .root
+            .unmap_range(page_addr, len, |addr| {
+                self.inner.page_tracker.is_removable_page(
+                    addr,
+                    self.inner.page_owner_id,
+                    MemType::Ram,
+                    tlb_version,
+                )
+            })
+            .map_err(Error::Paging)?;
+        for paddr in unmapped {
+            // Unwrap ok: Page was blocked and has just been unmapped.
+            self.inner.page_tracker.remove_page(paddr).unwrap();
         }
         Ok(())
     }

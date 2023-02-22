@@ -153,6 +153,14 @@ impl PageInfo {
         matches!(self.state, PageState::Reserved)
     }
 
+    pub fn is_blocked(&self) -> bool {
+        matches!(self.state, PageState::Blocked(_))
+    }
+
+    pub fn is_blocked_shared(&self) -> bool {
+        matches!(self.state, PageState::BlockedShared(_, _))
+    }
+
     /// Returns the page type.
     pub fn mem_type(&self) -> MemType {
         self.mem_type
@@ -315,6 +323,17 @@ impl PageInfo {
         }
     }
 
+    /// Returns if the page is Blocked or BlockedShared and can complete the removal at
+    /// the given `tlb_version`.
+    pub fn is_removable(&self, tlb_version: TlbVersion) -> bool {
+        use PageState::*;
+        match self.state {
+            Blocked(version) => version < tlb_version,
+            BlockedShared(_, version) => version < tlb_version,
+            _ => false,
+        }
+    }
+
     /// Returns if the page is Shared
     pub fn is_shared(&self) -> bool {
         use PageState::*;
@@ -413,27 +432,27 @@ impl PageInfo {
         }
     }
 
-    /// Promotes an invalidated page.
-    pub fn promote(&mut self) -> PageTrackingResult<()> {
-        self.unblock()
-    }
-
-    /// Demotes an invalidated page.
-    pub fn demote(&mut self) -> PageTrackingResult<()> {
-        self.unblock()
-    }
-
     /// Removes an invalidated page.
     pub fn remove(&mut self) -> PageTrackingResult<()> {
         use PageState::*;
         match self.state {
             Blocked(_) => {
-                self.state = Converted;
-                Ok(())
+                if self.owners.is_empty() {
+                    Err(PageTrackingError::OwnerUnderflow) // Can't pop the last owner.
+                } else {
+                    self.owners.pop().unwrap();
+                    self.state = Converted;
+                    Ok(())
+                }
             }
-            BlockedShared(_, _) => {
-                self.state = Mapped;
-                Ok(())
+            BlockedShared(rc, _) => {
+                // Shared pages start with a RC of 1, so RC is always > 0 here
+                if let Some(rc) = rc.checked_sub(1) {
+                    self.state = if rc == 0 { Mapped } else { Shared(rc) };
+                    Ok(())
+                } else {
+                    Err(PageTrackingError::RefCountUnderflow)
+                }
             }
             _ => Err(PageTrackingError::PageNotBlocked),
         }
