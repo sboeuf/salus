@@ -18,7 +18,9 @@ use u_mode_api::Error as UmodeApiError;
 use crate::guest_tracking::{GuestStateGuard, GuestVm, Guests};
 use crate::hyp_map::{UmodeSlotId, UmodeSlotPerm};
 use crate::umode::{Error as UmodeError, ExecError, UmodeTask};
-use crate::vm_cpu::{ActiveVmCpu, VmCpu, VmCpuParent, VmCpuStatus, VmCpuTrap, VmCpus, VM_CPUS_MAX};
+use crate::vm_cpu::{
+    ActiveVmCpu, PendingOperation, VmCpu, VmCpuParent, VmCpuStatus, VmCpuTrap, VmCpus, VM_CPUS_MAX,
+};
 use crate::vm_pages::Error as VmPagesError;
 use crate::vm_pages::{
     ActiveVmPages, AnyVmPages, GuestUmodeMapping, InstructionFetchError, PageFaultType, VmPages,
@@ -517,6 +519,47 @@ impl<'a, T: GuestStagePagingMode> FinalizedVm<'a, T> {
             .call_once(|| self.set_vcpu_htimedelta());
     }
 
+    // Completes any pending operation from the host for this VM.
+    fn complete_pending_op(&self, active_vcpu: &mut ActiveVmCpu<T>) -> EcallResult<u64> {
+        if let Some(pending_op) = active_vcpu.take_pending_op() {
+            // Complete pending operation at the VM level.
+            if let PendingOperation::Ecall(SbiMessage::TeeGuest(tee_guest_function)) = pending_op {
+                let host_a0 = active_vcpu.host_guest_gpr(GprIndex::A0);
+                match tee_guest_function {
+                    TeeGuestFunction::ShareMemory { addr, len } => {
+                        let addr = self.guest_addr_from_raw(addr)?;
+                        if host_a0 == 0 {
+                            self.vm_pages()
+                                .complete_share_mem_region(addr, len)
+                                .map_err(EcallError::from)?;
+                        } else {
+                            self.vm_pages()
+                                .reject_share_mem_region(addr, len)
+                                .map_err(EcallError::from)?;
+                        }
+                    }
+                    TeeGuestFunction::UnshareMemory { addr, len } => {
+                        let addr = self.guest_addr_from_raw(addr)?;
+                        if host_a0 == 0 {
+                            self.vm_pages()
+                                .complete_unshare_mem_region(addr, len)
+                                .map_err(EcallError::from)?;
+                        } else {
+                            self.vm_pages()
+                                .reject_unshare_mem_region(addr, len)
+                                .map_err(EcallError::from)?;
+                        }
+                    }
+                    _ => (),
+                }
+            }
+
+            // Complete pending operation at the vCPU level.
+            active_vcpu.complete_pending_op(pending_op);
+        }
+        Ok(0)
+    }
+
     /// Run `vcpu_id` until an unhandled exit is encountered. Save/restore `host_context` on entry/exit
     /// from the vCPU being run.
     pub fn run_vcpu(&self, vcpu_id: u64, host_context: VmCpuParent) -> EcallResult<u64> {
@@ -535,6 +578,7 @@ impl<'a, T: GuestStagePagingMode> FinalizedVm<'a, T> {
             .map_err(|_| EcallError::Sbi(SbiError::InvalidParam))?;
         // Run until there's an exit we can't handle.
         let cause = loop {
+            self.complete_pending_op(&mut active_vcpu)?;
             let exit = active_vcpu.run();
             use SbiReturnType::*;
             match exit {
@@ -2406,14 +2450,14 @@ impl<'a, T: GuestStagePagingMode> FinalizedVm<'a, T> {
     fn share_mem_region(&self, addr: u64, len: u64) -> EcallResult<TlbVersion> {
         let addr = self.guest_addr_from_raw(addr)?;
         self.vm_pages()
-            .share_mem_region_begin(addr, len)
+            .share_mem_region(addr, len)
             .map_err(EcallError::from)
     }
 
     fn unshare_mem_region(&self, addr: u64, len: u64) -> EcallResult<TlbVersion> {
         let addr = self.guest_addr_from_raw(addr)?;
         self.vm_pages()
-            .unshare_mem_region_begin(addr, len)
+            .unshare_mem_region(addr, len)
             .map_err(EcallError::from)
     }
 

@@ -366,7 +366,7 @@ struct PrevTlb {
 }
 
 // An operation that's pending a return value from the vCPU's host.
-enum PendingOperation {
+pub enum PendingOperation {
     Mmio(MmioOperation),
     Ecall(SbiMessage),
 }
@@ -560,8 +560,6 @@ impl<'vcpu, 'pages, 'host, T: GuestStagePagingMode> ActiveVmCpu<'vcpu, 'pages, '
 
     /// Runs this vCPU until it traps.
     pub fn run(&mut self) -> VmCpuTrap {
-        self.complete_pending_op();
-
         match self.host_context {
             VmCpuParent::HostVm(ref host_vcpu) => {
                 // TODO: Consider bailing out early if any of the below host interrupts are pending.
@@ -820,10 +818,10 @@ impl<'vcpu, 'pages, 'host, T: GuestStagePagingMode> ActiveVmCpu<'vcpu, 'pages, '
 
         use VmExitCause::*;
         match cause {
-            ResumableEcall(msg) | FatalEcall(msg) | BlockingEcall(msg, _) => {
+            ResumableEcall(msg) | FatalEcall(msg) => {
                 self.report_ecall_exit(msg);
             }
-            ForwardedEcall(msg) => {
+            ForwardedEcall(msg) | BlockingEcall(msg, _) => {
                 self.report_ecall_exit(msg);
                 self.arch.pending_op = Some(PendingOperation::Ecall(msg));
             }
@@ -1110,10 +1108,14 @@ impl<'vcpu, 'pages, 'host, T: GuestStagePagingMode> ActiveVmCpu<'vcpu, 'pages, '
         self.arch.shmem_area = None;
     }
 
+    pub fn take_pending_op(&mut self) -> Option<PendingOperation> {
+        self.arch.pending_op.take()
+    }
+
     // Completes any pending MMIO or ECALL result from the host for this vCPU.
-    fn complete_pending_op(&mut self) {
-        match self.arch.pending_op {
-            Some(PendingOperation::Mmio(mmio_op)) => {
+    pub fn complete_pending_op(&mut self, pending_op: PendingOperation) {
+        match pending_op {
+            PendingOperation::Mmio(mmio_op) => {
                 // Complete any pending load operations. The host is expected to have written the
                 // value to complete the load to A0.
                 let val = self.host_context.guest_gpr(GprIndex::A0);
@@ -1148,7 +1150,7 @@ impl<'vcpu, 'pages, 'host, T: GuestStagePagingMode> ActiveVmCpu<'vcpu, 'pages, '
                 // Advance SEPC past the faulting instruction.
                 self.inc_sepc(mmio_op.len() as u64);
             }
-            Some(PendingOperation::Ecall(msg)) => {
+            PendingOperation::Ecall(msg) => {
                 // Forward the SBI call return value from the A0/A1 values provided by the host.
                 let sbi_ret = match msg {
                     SbiMessage::PutChar(_) => {
@@ -1162,9 +1164,7 @@ impl<'vcpu, 'pages, 'host, T: GuestStagePagingMode> ActiveVmCpu<'vcpu, 'pages, '
 
                 self.set_ecall_result(sbi_ret);
             }
-            None => (),
         }
-        self.arch.pending_op = None;
     }
 
     fn save(&mut self) {
@@ -1269,6 +1269,10 @@ impl<'vcpu, 'pages, 'host, T: GuestStagePagingMode> ActiveVmCpu<'vcpu, 'pages, '
 
     pub fn is_host_vcpu(&self) -> bool {
         self.vcpu.guest_id.is_host()
+    }
+
+    pub fn host_guest_gpr(&mut self, index: GprIndex) -> u64 {
+        self.host_context.guest_gpr(index)
     }
 }
 
