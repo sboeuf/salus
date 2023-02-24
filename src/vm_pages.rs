@@ -428,7 +428,7 @@ impl VmRegionList {
     // Updates the region type with the new provided type. The region must already exist
     // and be marked with the expected type. If the range covers only a subrange of the
     // region, it is split accordingly.
-    fn update_in_place(
+    fn update(
         &mut self,
         start: GuestPageAddr,
         end: GuestPageAddr,
@@ -1213,7 +1213,7 @@ impl<'a, T: GuestStagePagingMode> FinalizedVmPages<'a, T> {
         .ok_or(Error::UnalignedAddress)?;
         // Check the address range lies within a "Confidential" region of guest physical address
         // space and update the region type to "ConfidentialRemovable".
-        self.inner.regions.write().update_in_place(
+        self.inner.regions.write().update(
             page_addr,
             end,
             VmRegionType::Confidential,
@@ -1237,7 +1237,7 @@ impl<'a, T: GuestStagePagingMode> FinalizedVmPages<'a, T> {
         .ok_or(Error::UnalignedAddress)?;
         // Check the address range lies within a "ConfidentialRemovable" region of guest
         // physical address space and update the region type to "Shared".
-        self.inner.regions.write().update_in_place(
+        self.inner.regions.write().update(
             page_addr,
             end,
             VmRegionType::ConfidentialRemovable,
@@ -1259,7 +1259,7 @@ impl<'a, T: GuestStagePagingMode> FinalizedVmPages<'a, T> {
         .ok_or(Error::UnalignedAddress)?;
         // Check the address range lies within a "ConfidentialRemovable" region of guest
         // physical address space and update the region type to "Confidential".
-        self.inner.regions.write().update_in_place(
+        self.inner.regions.write().update(
             page_addr,
             end,
             VmRegionType::ConfidentialRemovable,
@@ -1281,7 +1281,7 @@ impl<'a, T: GuestStagePagingMode> FinalizedVmPages<'a, T> {
         .ok_or(Error::UnalignedAddress)?;
         // Check the address range lies within a "Shared" region of guest physical address space
         // and update the region type to "SharedRemovable".
-        self.inner.regions.write().update_in_place(
+        self.inner.regions.write().update(
             page_addr,
             end,
             VmRegionType::Shared,
@@ -1305,7 +1305,7 @@ impl<'a, T: GuestStagePagingMode> FinalizedVmPages<'a, T> {
         .ok_or(Error::UnalignedAddress)?;
         // Check the address range lies within a "SharedRemovable" region of guest physical
         // address space and update the region type to "Confidential".
-        self.inner.regions.write().update_in_place(
+        self.inner.regions.write().update(
             page_addr,
             end,
             VmRegionType::SharedRemovable,
@@ -1327,7 +1327,7 @@ impl<'a, T: GuestStagePagingMode> FinalizedVmPages<'a, T> {
         .ok_or(Error::UnalignedAddress)?;
         // Check the address range lies within a "SharedRemovable" region of guest physical
         // address space and update the region type to "Shared".
-        self.inner.regions.write().update_in_place(
+        self.inner.regions.write().update(
             page_addr,
             end,
             VmRegionType::SharedRemovable,
